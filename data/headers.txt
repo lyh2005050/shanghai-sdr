@@ -1,0 +1,13 @@
+HTTP/2 200 
+date: Sat, 12 Sep 2026 14:17:56 GMT
+content-type: text/plain
+cf-ray: a39f89ddfda95f13-SJC
+cf-cache-status: DYNAMIC
+access-control-allow-origin: *
+nel: {"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}
+server: cloudflare
+set-cookie: sl-session=UatnJpSwpmrq7J2UVKpA3g==; Path=/; Max-Age=86400; HttpOnly
+vary: accept-encoding
+report-to: {"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=SDI6HqQGa5hS4a%2FgGdi%2FNdx7opMbzvOsThrWzkLHIXX%2BV4HefsPSgWEOX5JePv%2FrZW33%2Ft9RVxOHABnrrncgiOoBb2cOkT0yTOwn9J2khNoB4tAasuS3G1ttLa%2BQp7%2BH11u7"}]}
+alt-svc: h3=":443"; ma=86400
+

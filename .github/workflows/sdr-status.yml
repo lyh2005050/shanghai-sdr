@@ -2,9 +2,11 @@ name: SDR Status Monitor
 
 on:
   schedule:
-    # 每 5 分钟抓取一次（GitHub Actions 最小粒度）
     - cron: "*/5 * * * *"
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   fetch-status:

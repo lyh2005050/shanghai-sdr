@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  issues: write
+  pull-requests: write
 
 jobs:
   fetch-status:
@@ -17,14 +19,38 @@ jobs:
       - name: Fetch SDR status
         run: |
           mkdir -p data
-          curl -sS --max-time 20 https://yanamipink.cc.cd/status > data/status.txt
-          echo "---"
+          # 带上 ETag 条件请求，减少不必要的下载
+          if [ -f data/etag.txt ]; then
+            ETAG=$(cat data/etag.txt)
+            HTTP_CODE=$(curl -sS -w "%{http_code}" -H "If-None-Match: $ETAG" -o data/status_new.txt --max-time 20 https://yanamipink.cc.cd/status)
+            echo "HTTP $HTTP_CODE"
+            if [ "$HTTP_CODE" = "304" ]; then
+              echo "无变化，跳过"
+              rm data/status_new.txt
+              echo "CHANGED=false" >> $GITHUB_ENV
+              exit 0
+            fi
+            mv data/status_new.txt data/status.txt
+          else
+            curl -sS -D data/headers.txt --max-time 20 https://yanamipink.cc.cd/status > data/status.txt
+            grep -i "etag:" data/headers.txt | sed 's/[Ee][Tt][Aa][Gg]: //I' | tr -d '\r\n' > data/etag.txt
+          fi
+
+          # 对比旧文件
+          if [ -f data/status_old.txt ] && diff -q data/status.txt data/status_old.txt > /dev/null; then
+            echo "CHANGED=false" >> $GITHUB_ENV
+          else
+            cp data/status.txt data/status_old.txt
+            echo "CHANGED=true" >> $GITHUB_ENV
+          fi
+
           cat data/status.txt
 
-      - name: Commit status
+      - name: Commit if changed
+        if: env.CHANGED == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/status.txt
-          git diff --staged --quiet || git commit -m "auto: 更新 SDR 状态 $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git add data/
+          git commit -m "auto: SDR 状态变化 $(date -u '+%Y-%m-%d %H:%M UTC')"
           git push

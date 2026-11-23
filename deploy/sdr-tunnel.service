@@ -1,0 +1,17 @@
+[Unit]
+Description=Cloudflare Tunnel for SDR Dashboard
+After=network-online.target sdr-dashboard.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+# 临时快速隧道：无 token，启动时随机分配 *.trycloudflare.com 域名（重启后域名会变）
+ExecStart=/usr/local/bin/cloudflared tunnel --url http://127.0.0.1:8097 --no-autoupdate
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

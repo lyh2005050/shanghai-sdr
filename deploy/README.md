@@ -60,3 +60,29 @@ journalctl -u sdr-monitor -f      # 查看实时日志
 - 进程异常退出会被 systemd `Restart=always` 自动拉起。
 - 掉线只会在「在线 → 离线」跳变时通知一次，恢复时再通知一次，不会每秒重复轰炸。
 - 若站点在国内服务器上、网络访问 `sdr.bh4dts.site:8073` 不通，先在该机器上 `curl -I http://sdr.bh4dts.site:8073/status` 验证连通性。
+
+## 五、Web 监控面板（web/）
+
+`web/api_server.py`（标准库后端）+ `web/index.html`（单文件前端），读取本地 `data/` 状态与趋势，提供：
+
+- `GET /api/status`：实时状态（回源 KiwiSDR 端点 + 本地状态机）
+- `GET /api/metrics`：最近趋势指标
+- `GET /`：面板页面
+
+systemd 服务：`deploy/sdr-dashboard.service`（监听 `0.0.0.0:8097`，可改 `HOST/PORT`）。
+
+### NAT 内网机器对外暴露：Cloudflare Tunnel
+
+源站在 NAT 后、公网未映射 HTTP 端口时，用 `cloudflared` 出站隧道（无需公网端口）：
+
+```bash
+# 安装二进制后，临时快速隧道（随机 *.trycloudflare.com 域名，重启域名会变）
+cloudflared tunnel --url http://127.0.0.1:8097 --no-autoupdate
+```
+
+常驻服务：`deploy/sdr-tunnel.service`，`systemctl enable --now sdr-tunnel`。
+日志里用 `journalctl -u sdr-tunnel | grep trycloudflare.com` 取当前域名。
+
+> 固定域名需在 Cloudflare 控制台建命名隧道（named tunnel），把 token 填入 service 的 `cloudflared tunnel run --token <TOKEN>`。
+
+OpenResty 反代参考：`deploy/sdr-dashboard.conf`（若源站有公网端口，可在高位端口反代到 8097，不必走隧道）。

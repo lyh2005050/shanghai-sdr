@@ -19,28 +19,38 @@ jobs:
       - name: Fetch SDR status
         run: |
           mkdir -p data
-          if [ -f data/etag.txt ]; then
-            ETAG=$(cat data/etag.txt)
-            HTTP_CODE=$(curl -sS -w "%{http_code}" -H "If-None-Match: $ETAG" -o data/status_new.txt --max-time 20 https://yanamipink.cc.cd/status)
-            if [ "$HTTP_CODE" = "304" ]; then
-              echo "无变化，跳过"
-              rm data/status_new.txt
-              echo "CHANGED=false" >> $GITHUB_ENV
-              exit 0
-            fi
-            mv data/status_new.txt data/status.txt
-          else
-            curl -sS -D data/headers.txt --max-time 20 https://yanamipink.cc.cd/status > data/status.txt
-            grep -i "etag:" data/headers.txt | sed 's/[Ee][Tt][Aa][Gg]: //I' | tr -d '\r\n' > data/etag.txt
+          URL="http://sdr.bh4dts.site:8073/status"
+          HTTP_CODE=$(curl -sS -w "%{http_code}" -o data/status_new.txt --max-time 20 "$URL" || echo "000")
+          echo "HTTP $HTTP_CODE"
+
+          # 抓取失败（DNS/超时/连接错误）：保留上次状态，不中断工作流
+          if [ "$HTTP_CODE" = "000" ]; then
+            echo "::warning::无法连接 SDR 站点，本次跳过更新"
+            rm -f data/status_new.txt
+            echo "FETCH_OK=false" >> "$GITHUB_ENV"
+            exit 0
           fi
+
+          # 返回的不是纯文本状态（如 HTML 面板首页）：判定为无效响应
+          if head -c 200 data/status_new.txt | grep -qi "<html\|<doctype"; then
+            echo "::warning::返回内容为 HTML 页面，非状态文本，本次跳过"
+            rm -f data/status_new.txt
+            echo "FETCH_OK=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          mv data/status_new.txt data/status.txt
+          echo "FETCH_OK=true" >> "$GITHUB_ENV"
           cat data/status.txt
 
       - name: Generate report
+        if: env.FETCH_OK == 'true'
         run: |
           python3 scripts/analyze.py
           cat data/report.md
 
       - name: Commit if changed
+        if: env.FETCH_OK == 'true'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"

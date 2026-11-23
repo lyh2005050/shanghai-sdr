@@ -1,2 +1,5 @@
 [2026-11-23 15:05:31] 抓取成功 online=True users=8/13 snr=16,13 gps=26 latency=500ms
 [2026-11-23 15:05:31] 首次记录，当前状态：在线
+[2026-11-23 15:08:48] 监控启动｜url=http://sdr.bh4dts.site:8073/status interval=1.0s sample_every=1 once=True
+[2026-11-23 15:08:48] [#1] online=True users=8/13 snr=16,13 gps=17 latency=405ms
+[2026-11-23 15:08:48] 监控已停止

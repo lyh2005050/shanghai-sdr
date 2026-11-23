@@ -168,14 +168,17 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
-        if path == "/api/status":
+        # 兼容子路径前缀，如 /sdr/api/status -> /api/status
+        if path.startswith("/sdr/"):
+            path = path[4:]
+        if path in ("/", "/index.html"):
+            self._send_file(os.path.join(STATIC_DIR, "index.html"), "text/html; charset=utf-8")
+        elif path == "/api/status":
             self._send_json(build_status())
         elif path == "/api/metrics":
             self._send_json({"metrics": read_metrics()})
         elif path == "/api/health":
             self._send_json({"ok": True, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
-        elif path in ("/", "/index.html"):
-            self._send_file(os.path.join(STATIC_DIR, "index.html"), "text/html; charset=utf-8")
         else:
             self.send_error(404, "not found")
 

@@ -202,8 +202,8 @@ function drawChart(){
 async function refresh(){
   try{
     const [s, m] = await Promise.all([
-      fetch("/api/status").then(r=>r.json()),
-      fetch("/api/metrics").then(r=>r.json())
+      fetch("api/status").then(r=>r.json()),
+      fetch("api/metrics").then(r=>r.json())
     ]);
     renderStatus(s);
     metricsCache = m.metrics || [];

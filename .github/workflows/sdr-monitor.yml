@@ -1,9 +1,8 @@
 name: SDR Monitor Alert
 
+# 说明：高频（秒级）监控由本地常驻进程完成，见 deploy/README.md 与 deploy/sdr-monitor.service。
+# 本 Actions 仅保留手动单次探测（--once），不再用 schedule 定时——GitHub Actions 定时最短 5 分钟，无法做到每秒。
 on:
-  schedule:
-    # 与主监控错开 2 分钟，每 5 分钟一轮
-    - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -11,7 +10,7 @@ permissions:
 
 env:
   SDR_URL: "http://sdr.bh4dts.site:8073/status"
-  TIMEOUT: "15"
+  TIMEOUT: "10"
   # Webhook 地址在仓库 Settings → Secrets and variables → Actions 中配置 WEBHOOK_URL；
   # 未配置时脚本自动跳过通知，不影响运行。
   WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
@@ -22,8 +21,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run monitor
-        run: python3 scripts/monitor.py
+      - name: Run monitor (once)
+        run: python3 scripts/monitor.py --once
 
       - name: Commit metrics & state
         run: |

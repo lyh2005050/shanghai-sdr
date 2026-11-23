@@ -1,27 +1,36 @@
 #!/usr/bin/env python3
 """
-独立 SDR 监控脚本（第二套）。
+独立 SDR 常驻监控程序（第二套）。
 
-与 analyze.py 并行运行，职责：
-1. 抓取 KiwiSDR 状态端点，判定在线 / 离线 / 抓取失败；
-2. 用 data/monitor_state.json 记录上次状态，检测“掉线”和“恢复”事件；
-3. 把用户数、SNR、GPS 等指标追加到 data/monitor_metrics.csv；
-4. 状态变化时通过 Webhook 推送通知（地址从环境变量 WEBHOOK_URL 读取，未配置则跳过）；
-5. 全程容错：任何异常都写日志并以 0 退出，避免工作流红色失败。
+以常驻进程方式高频探测 KiwiSDR 状态端点（默认每 1 秒一轮），职责：
+1. 判定在线 / 离线 / 抓取失败；
+2. 用 data/monitor_state.json 记录上次状态，检测“掉线”“恢复”事件并告警；
+3. 指标写入 data/monitor_metrics.csv（可通过 SAMPLE_EVERY 降采样，避免每秒刷爆文件）；
+4. 状态变化时通过 Webhook 推送通知（WEBHOOK_URL 未配置则跳过）；
+5. 全程容错：单轮异常不退出进程，写日志后继续下一轮。
+
+用法：
+  python3 monitor.py              # 常驻循环，间隔 INTERVAL 秒（默认 1）
+  python3 monitor.py --once       # 只跑一轮就退出（兼容 CI / 定时任务）
 
 环境变量：
   SDR_URL       状态端点，默认 http://sdr.bh4dts.site:8073/status
   WEBHOOK_URL   可选，掉线 / 恢复时推送的 Webhook 地址
-  TIMEOUT       抓取超时秒数，默认 15
+  TIMEOUT       单次抓取超时秒数，默认 5（高频探测建议短超时）
+  INTERVAL      常驻轮询间隔秒数，默认 1
+  SAMPLE_EVERY  每多少轮落一条指标到 CSV，默认 1（=每轮都记）；
+                设为 60 表示约每分钟记一条，其余轮次只判状态不写文件
 """
 import csv
 import json
 import os
+import signal
 import sys
+import time
 import urllib.request
 from datetime import datetime
 
-DATA_DIR = "data"
+DATA_DIR = os.environ.get("DATA_DIR", "data")
 STATE_FILE = os.path.join(DATA_DIR, "monitor_state.json")
 METRICS_FILE = os.path.join(DATA_DIR, "monitor_metrics.csv")
 LOG_FILE = os.path.join(DATA_DIR, "monitor.log")
@@ -30,13 +39,23 @@ METRIC_FIELDS = ["time", "online", "reachable", "users", "users_max", "snr", "gp
 
 SDR_URL = os.environ.get("SDR_URL", "http://sdr.bh4dts.site:8073/status")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "").strip()
-TIMEOUT = int(os.environ.get("TIMEOUT", "15"))
+TIMEOUT = int(os.environ.get("TIMEOUT", "5"))
+INTERVAL = float(os.environ.get("INTERVAL", "1"))
+SAMPLE_EVERY = max(1, int(os.environ.get("SAMPLE_EVERY", "1")))
+
+_running = True
+
+
+def _handle_signal(signum, frame):
+    global _running
+    _running = False
+    log("收到退出信号，准备停止监控…")
 
 
 def log(msg):
     os.makedirs(DATA_DIR, exist_ok=True)
     line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
-    print(line)
+    print(line, flush=True)
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(line + "\n")
 
@@ -52,7 +71,6 @@ def parse_status(text):
 
 def fetch_status():
     """返回 (reachable, status_dict, latency_ms, error)。"""
-    import time
     start = time.time()
     try:
         req = urllib.request.Request(SDR_URL, headers={"User-Agent": "sdr-monitor/1.0"})
@@ -95,9 +113,9 @@ def append_metrics(row):
 
 def send_webhook(text, level):
     if not WEBHOOK_URL:
-        log("未配置 WEBHOOK_URL，跳过通知")
         return
-    payload = json.dumps({"text": text, "level": level, "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}).encode()
+    payload = json.dumps({"text": text, "level": level,
+                          "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}).encode()
     try:
         req = urllib.request.Request(
             WEBHOOK_URL, data=payload,
@@ -108,10 +126,10 @@ def send_webhook(text, level):
         log(f"Webhook 推送失败：{type(e).__name__}: {e}")
 
 
-def main():
+def poll_once(round_no, sample):
     reachable, status, latency, err = fetch_status()
     online = reachable and status.get("offline") == "no"
-    now = datetime.now().strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     users = status.get("users") or "?"
     users_max = status.get("users_max") or "?"
@@ -119,26 +137,22 @@ def main():
     gps_good = status.get("gps_good") or "?"
 
     if not reachable:
-        log(f"抓取失败：{err}（{latency}ms）")
+        log(f"[#{round_no}] 抓取失败：{err}（{latency}ms）")
     else:
-        log(f"抓取成功 online={online} users={users}/{users_max} snr={snr} gps={gps_good} latency={latency}ms")
+        log(f"[#{round_no}] online={online} users={users}/{users_max} snr={snr} gps={gps_good} latency={latency}ms")
 
-    append_metrics({
-        "time": now,
-        "online": "yes" if online else "no",
-        "reachable": "yes" if reachable else "no",
-        "users": users,
-        "users_max": users_max,
-        "snr": snr,
-        "gps_good": gps_good,
-        "latency_ms": latency,
-    })
+    if sample:
+        append_metrics({
+            "time": now, "online": "yes" if online else "no",
+            "reachable": "yes" if reachable else "no",
+            "users": users, "users_max": users_max, "snr": snr,
+            "gps_good": gps_good, "latency_ms": latency,
+        })
 
     prev = load_state()
     prev_online = prev.get("online")
     event = "none"
 
-    # 事件判定：仅在与上次状态不同时触发，避免重复告警
     if prev_online is None:
         event = "init"
         log(f"首次记录，当前状态：{'在线' if online else '离线/不可达'}")
@@ -151,16 +165,36 @@ def main():
         event = "down"
         msg = f"❌ SDR 掉线｜原因：{reason}"
         log(msg); send_webhook(msg, "down")
-    else:
-        log("状态未变化，不触发告警")
 
     save_state({"online": online, "reachable": reachable, "time": now, "event": event})
+
+
+def main():
+    once = "--once" in sys.argv
+    signal.signal(signal.SIGINT, _handle_signal)
+    signal.signal(signal.SIGTERM, _handle_signal)
+
+    log(f"监控启动｜url={SDR_URL} interval={INTERVAL}s sample_every={SAMPLE_EVERY} once={once}")
+    round_no = 0
+
+    while _running:
+        round_no += 1
+        sample = (round_no % SAMPLE_EVERY == 0)
+        try:
+            poll_once(round_no, sample)
+        except Exception as e:
+            log(f"第 {round_no} 轮异常：{type(e).__name__}: {e}")
+        if once:
+            break
+        # 分段睡眠，保证收到信号能较快退出
+        slept = 0.0
+        while _running and slept < INTERVAL:
+            time.sleep(min(0.2, INTERVAL - slept))
+            slept += 0.2
+
+    log("监控已停止")
     return 0
 
 
 if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except Exception as e:
-        log(f"监控脚本异常：{type(e).__name__}: {e}")
-        sys.exit(0)
+    sys.exit(main())

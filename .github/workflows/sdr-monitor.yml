@@ -1,0 +1,38 @@
+name: SDR Monitor Alert
+
+on:
+  schedule:
+    # 与主监控错开 2 分钟，每 5 分钟一轮
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  SDR_URL: "http://sdr.bh4dts.site:8073/status"
+  TIMEOUT: "15"
+  # Webhook 地址在仓库 Settings → Secrets and variables → Actions 中配置 WEBHOOK_URL；
+  # 未配置时脚本自动跳过通知，不影响运行。
+  WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run monitor
+        run: python3 scripts/monitor.py
+
+      - name: Commit metrics & state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/monitor_state.json data/monitor_metrics.csv data/monitor.log
+          if git diff --staged --quiet; then
+            echo "无新指标，无需提交"
+          else
+            git commit -m "auto: 监控指标 $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push
+          fi
